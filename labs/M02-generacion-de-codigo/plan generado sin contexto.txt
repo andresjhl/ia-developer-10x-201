@@ -1,0 +1,124 @@
+Ya terminé de explorar el código y no he tocado nada.
+  Este es el plan, y espero tu confirmación antes de
+  implementar.
+  
+  Plan DEV-412: devolver entradas desde "Mis entradas"
+     
+  Reglas de negocio. Las saco de ../CHULETA.md:211-218,
+  porque no existe AGENTS.md ni CLAUDE.md en el repo:
+  1. Un pedido pagado no se modifica. La devolución es
+     un movimiento nuevo que referencia el pedido.
+  2. Los gastos de gestión no se reembolsan.
+  3. La comisión se redondea por entrada.
+  4. Solo se puede devolver hasta 48 h antes del evento.
+  5. El QR devuelto deja de validar y la butaca vuelve a
+     quedar libre.
+  6. El correo sale una sola vez, aunque la cola
+     reintente el trabajo.
+
+  Lo que ya existe.
+  - La pasarela ya tiene POST /refunds, total o parcial
+    (services/payments/src/gateway.ts). Solo falta el
+    cliente en la API.
+  - TICKET_STATUS ya contempla refunded
+    (apps/storefront/src/pages.tsx:8).
+  - El índice único de butacas solo cuenta pending y
+    valid (001_init.sql). Un ticket refunded libera la
+    butaca sin más cambios.
+  - /api/tickets/validate rechaza cualquier estado
+    distinto de valid (routes/tickets.ts). El QR
+    devuelto deja de validar sin tocar nada.
+
+  Pasos
+
+  1. Migración 002_refunds.sql.
+     - Tabla refunds con id, order_id, charge_refund_id,
+       amount_cents, commission_cents y created_at.
+     - Tabla refund_items con refund_id y ticket_id. Ahí
+       queda qué entradas cubre cada devolución.
+     - El pedido no se modifica (regla 1). El ticket
+       pasa a status='refunded', igual que ya hace void.
+  2. pricing.ts: función calcRefundAmounts.
+     - Importe a devolver = suma de price_cents de las
+       entradas elegidas. No incluye fee_cents
+       (regla 2).
+     - Comisión a revertir = suma de la commission_cents
+       ya guardada por entrada, sin recalcular sobre el
+       total (regla 3).
+     - Con tests en services/api/test/: devolver F-13 de
+       PED-2026-0107 da 35,50 € y comisión 2,66 €, sin
+       los 0,90 € de gastos.
+  3. payments-client.ts: función refund(chargeId,
+     amountCents). Llama a POST /refunds.
+  4. service.ts: función refundTickets(tenantId, 
+     orderId, email, ticketIds).
+     - Valida que el pedido sea del comprador (mismo
+       criterio que getBuyerOrder) y esté paid.
+     - Valida que todas las entradas pertenezcan al
+       pedido, estén valid y no tengan checked_in_at.
+     - Valida que falten más de 48 h para starts_at
+       (regla 4).
+     - Dentro de una transacción, con SELECT … FOR 
+       UPDATE sobre los tickets para evitar dobles
+       devoluciones concurrentes:
+       - llama a la pasarela;
+       - inserta refunds y refund_items;
+       - marca los tickets como refunded y limpia
+         qr_token.
+     - Orden de operaciones: lo decidiremos juntos (ver
+       pregunta abajo).
+  5. Ruta POST /api/public/orders/:id/refund. Recibe { 
+     email, ticket_ids[] } y devuelve el detalle de la
+     devolución. Va en routes/public.ts.
+  6. Correo de devolución (regla 6).
+     - Nuevo EmailJob refund-confirmed en queue.ts y
+       jobs.ts, con plantilla en templates.ts.
+     - Se encola con jobId determinista
+       (refund-<refundId>), así BullMQ no duplica el
+       trabajo.
+     - El handler comprueba email_log.job_id antes de
+       parcial.
+     - Pido tu criterio sobre si el correo de
+       confirmación del pedido original también necesita
+       esa protección (hoy no la tiene).
+  7. UI en "Mis entradas" (pages.tsx + ui/src/api.ts).
+     - Casillas por entrada valid y botón "Devolver
+       seleccionadas", con confirmación e importe a
+       reembolsar (sin gastos).
+     - Se deshabilita pasado el plazo de 48 h, con un
+       texto que lo explique.
+     - Método api.refund(...) y tipo nuevo en api.ts.
+     - Tras devolver se recarga el pedido, y las
+       entradas devueltas salen como "devuelta" en vez
+       del QR.
+  8. Tests.
+     - Vitest sobre cálculo y reglas: parcial, total,
+       fuera de plazo, entrada ya usada y doble
+       devolución.
+     - Ajuste de la validación de QR para una entrada
+       devuelta.
+     - Comprobación manual con el pedido de ejemplo en
+       tienda y Mailpit.
+
+  Decisiones abiertas. Dímelas y arranco:
+  1. Orden pasarela/BD. Mi propuesta es reservar primero
+       del QR.
+  8. Tests.
+     - Vitest sobre cálculo y reglas: parcial, total, fuera de plazo, entrada ya usada y doble
+       devolución.
+     - Ajuste de la validación de QR para una entrada devuelta.
+     - Comprobación manual con el pedido de ejemplo en tienda y Mailpit.
+
+  Decisiones abiertas. Dímelas y arranco:
+  1. Orden pasarela/BD. Mi propuesta es reservar primero en BD (tickets refunded dentro de la
+     transacción), luego llamar a la pasarela y revertir si falla. Así nadie compra la butaca
+     mientras se devuelve el dinero. La alternativa es cobrar primero y marcar después, que deja un
+     hueco si el proceso cae a mitad.
+  2. Pedido a medias. Cuando se devuelven todas las entradas, ¿añado un estado derivado refunded en
+     la respuesta del pedido? Mi propuesta es calcularlo, sin guardarlo ni modificar orders.
+  3. Pases VIP. Dos preguntas:
+     - ¿Se pueden devolver igual que las butacas? Asumo que sí.
+     - ¿Hay que devolver la comisión del promotor, o la pasarela solo reembolsa el precio? Asumo
+       que se revierte en liquidaciones.
+
+  ¿Confirmas el plan y esas tres decisiones?
