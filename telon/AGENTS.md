@@ -51,6 +51,15 @@ Venta de entradas multi-promotor (tenant). Todo el texto de cara al usuario, err
 - Lo que sale por la cola tiene que poder reintentarse sin efectos duplicados.
 - Máximo 10 entradas por pedido.
 
+## Páginas de eventos (TSX de los promotores)
+
+- Solo se puede importar `react`, `react/jsx-runtime` y `@telon/ui`; cualquier otro módulo lanza `PageCompileError` (`packages/page-runtime/src/compile.ts`, `ALLOWED` y `require`).
+- Hay que hacer `export default` de un componente (función); si no, `PageCompileError` (`compile.ts`). Sucrase solo transpila TS/JSX, no comprueba tipos.
+- `PageRenderer` debe ir dentro de `<TelonProvider>` (lo ponen las apps, p. ej. `apps/storefront/src/pages.tsx`); sin él los componentes lanzan error (`page-runtime/src/PageRenderer.tsx`, `ui/src/context.tsx`).
+- Componentes: `Cart`, `Checkout`, `PassSelector`, `SeatPicker` (prop opcional `zone`) y `TicketQR` (`token`, `label`, `filename?`); funciones `formatEuros`, `formatDate`; hooks `useEvent`, `useCart`, `useTelon`; `ApiError`, `createApi`, `MAX_TICKETS` (`ui/src/index.ts`).
+- Color: los componentes leen la variable CSS `--telon-accent` (por defecto `#f2b544`) y heredan color y tipografía de la página (`ui/src/styles.ts`). Se define en un elemento que envuelva los componentes: `style={{ '--telon-accent': '#e63946' } as React.CSSProperties}`.
+- Ejemplos completos: `services/api/seed/*.tsx` (no los edites, ver «No hacer»). Si cambias la API de `@telon/ui`, actualiza también `ui/src/editor-types.ts`.
+
 ## No hacer
 
 - No pegar credenciales reales ni API keys de proveedores de los promotores.
