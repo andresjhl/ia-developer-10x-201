@@ -1,0 +1,6 @@
+---
+description: Contexto del proyecto Telón
+alwaysApply: true
+---
+
+Lee y aplica `AGENTS.md` en la raíz de `telon/`: stack, cómo se prueba, convenciones y reglas de negocio.
